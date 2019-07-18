@@ -85,20 +85,33 @@ def convert_concat(node, params, layers, node_name):
     """
     logger = logging.getLogger('onnx2keras:concat')
 
-    if is_numpy(layers[node.input[0]]) and is_numpy(layers[node.input[1]]):
-        logger.debug('Concat 2 numpy arrays.')
-        layers[node_name] = np.concatenate([layers[node.input[0]], layers[node.input[1]]], axis=params['axis'])
+    def is_np():
+        for n_ip in node.input:
+            if not is_numpy(layers[n_ip]):
+                return False
+        return True
+
+    num_ip = len(node.input)
+    inputs = []
+
+    if is_np():
+        for ip in node.input:
+            inputs.append(layers[ip])
+
+        logger.debug('Concat {} numpy arrays.'.format(num_ip))
+        layers[node_name] = np.concatenate(inputs, axis=params['axis'])
     else:
-        logger.debug('Concat 2 tf tensors.')
-        input_0 = ensure_tf_type(layers[node.input[0]], layers[list(layers)[0]])
-        input_1 = ensure_tf_type(layers[node.input[1]], layers[list(layers)[0]])
+        for ip in node.input:
+            inputs.append(ensure_tf_type(layers[ip], layers[list(layers)[0]]))
 
-        def target_layer(x, axis=params['axis']):
-            import tensorflow as tf
-            return tf.concat(x, axis=axis)
+        # def target_layer(x, axis=params['axis']):
+        #     import tensorflow as tf
+        #     return tf.concat(x, axis=axis)
+        #
+        # lambda_layer = keras.layers.Lambda(target_layer, name=node_name)
 
-        lambda_layer = keras.layers.Lambda(target_layer, name=node_name)
-        layers[node_name] = lambda_layer([input_0, input_1])
+        logger.debug('Concat {} tf tensors.'.format(num_ip))
+        layers[node_name] = keras.layers.concatenate(inputs=inputs, axis=params['axis'], name=node_name)
 
 
 def convert_reshape(node, params, layers, node_name):

@@ -207,3 +207,30 @@ def convert_convtranspose(node, params, layers, node_name):
             layers[node_name] = crop(input_0)
     else:
         raise AttributeError('Layer is not supported for now')
+
+
+def convert_upsample(node, params, layers, node_name):
+    """
+        Convert upsampling layer
+        :param node: current operation node
+        :param params: operation attributes
+        :param layers: available keras layers
+        :param node_name: resulting layer name
+        :return: None
+    """
+    logger = logging.getLogger('onnx2keras:upsample')
+
+    if len(node.input) != 2:
+        raise NotImplementedError('Upsample layer: Invalid Params')
+
+    input_0 = ensure_tf_type(layers[node.input[0]])
+    scale = ensure_numpy_type(layers[node.input[1]])[2:]
+
+    mode = str(params['mode'])[2:-1]
+    if mode == 'linear':
+        mode = 'bilinear'
+
+    upsample = keras.layers.UpSampling2D(size=(scale[0], scale[1]), interpolation=mode, name=node_name)
+
+    layers[node_name] = upsample(input_0)
+

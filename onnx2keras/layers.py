@@ -1,4 +1,4 @@
-from .convolution_layers import convert_conv, convert_convtranspose
+from .convolution_layers import convert_conv, convert_convtranspose, convert_upsample
 from .activation_layers import convert_relu, convert_lrelu, convert_selu, \
     convert_sigmoid, convert_tanh, convert_softmax
 from .operation_layers import convert_clip, convert_exp, convert_reduce_sum, convert_reduce_mean, convert_log, convert_pow, convert_sqrt, convert_split, convert_max
@@ -50,5 +50,6 @@ AVAILABLE_CONVERTERS = {
     'Concat': convert_concat,
     'Reshape': convert_reshape,
     'Pad': convert_padding,
-    'Flatten': convert_flatten
+    'Flatten': convert_flatten,
+    'Upsample': convert_upsample
 }
