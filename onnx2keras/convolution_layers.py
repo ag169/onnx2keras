@@ -1,6 +1,7 @@
 import keras.layers
 import logging
 from .utils import ensure_tf_type, ensure_numpy_type
+from math import floor
 
 
 def convert_conv(node, params, layers, node_name):
@@ -31,29 +32,57 @@ def convert_conv(node, params, layers, node_name):
         raise NotImplementedError('Not implemented')
 
     input_0 = ensure_tf_type(layers[node.input[0]])
+
     n_groups = params['group'] if 'group' in params else 1
-    dilation = params['dilations'][0] if 'dilations' in params else 1
-    pads = params['pads'] if 'pads' in params else [0, 0]
-    strides = params['strides'] if 'strides' in params else [1, 1]
 
     if len(W.shape) == 5:  # 3D conv
         raise NotImplementedError('Not implemented')
-
     elif len(W.shape) == 4:  # 2D conv
-        logger.debug('2D convolution')
 
-        if pads[0] > 0 or pads[1] > 0:
-            logger.debug('Paddings exist, add ZeroPadding layer')
-            padding_name = node_name + '_pad'
-            padding_layer = keras.layers.ZeroPadding2D(
-                padding=(pads[0], pads[1]),
-                name=padding_name
-            )
-            layers[padding_name] = input_0 = padding_layer(input_0)
+        dilation = params['dilations'] if 'dilations' in params else [1, 1]
+        pads = params['pads'] if 'pads' in params else [0, 0, 0, 0]
+        strides = params['strides'] if 'strides' in params else [1, 1]
+
+        ip_shape = input_0._keras_shape
+        h_in = ip_shape[2]
+        w_in = ip_shape[3]
+
+        logger.debug('2D convolution')
 
         W = W.transpose(2, 3, 1, 0)
         height, width, channels_per_group, out_channels = W.shape
         in_channels = channels_per_group * n_groups
+
+        padding_mode = 'valid'
+
+        if pads[0] > 0 or pads[1] > 0:
+            if h_in is not None and w_in is not None:
+                h_out = (h_in + strides[0] - 1) // strides[0]
+                w_out = (w_in + strides[1] - 1) // strides[1]
+
+                h_out_conv = floor(1.0 + (h_in + (pads[0] + pads[2]) - dilation[0] * (height - 1) - 1.0) / strides[0])
+                w_out_conv = floor(1.0 + (w_in + (pads[1] + pads[3]) - dilation[1] * (width - 1) - 1.0) / strides[1])
+
+                if h_out_conv == h_out and w_out_conv == w_out and abs(pads[0] - pads[2]) <= 1 \
+                        and abs(pads[1] - pads[3]) <= 1:
+                    logger.debug("Paddings exist and are corresponding to 'same', setting mode to 'same'")
+                    padding_mode = 'same'
+            else:
+                h_diff = floor(1.0 + (pads[0] + pads[2] - dilation[0] * (height - 1) - 1) / strides[0])
+                w_diff = floor(1.0 + (pads[1] + pads[3] - dilation[1] * (height - 1) - 1) / strides[1])
+
+                if h_diff == 0 and w_diff == 0 and abs(pads[0] - pads[2]) <= 1 and abs(pads[1] - pads[3]) <= 1:
+                    logger.debug("Paddings exist and are corresponding to 'same', setting mode to 'same'")
+                    padding_mode = 'same'
+
+            if padding_mode == 'valid':
+                logger.debug("Paddings exist and are not corresponding to 'same', add ZeroPadding layer")
+                padding_name = node_name + '_pad'
+                padding_layer = keras.layers.ZeroPadding2D(
+                    padding=(pads[0], pads[1]),
+                    name=padding_name
+                )
+                layers[padding_name] = input_0 = padding_layer(input_0)
 
         if n_groups == in_channels and n_groups != 1:
             logger.debug('Number of groups is equal to input channels, use DepthWise convolution')
@@ -66,7 +95,7 @@ def convert_conv(node, params, layers, node_name):
             conv = keras.layers.DepthwiseConv2D(
                 kernel_size=(height, width),
                 strides=(strides[0],strides[1]),
-                padding='valid',
+                padding=padding_mode,
                 use_bias=has_bias,
                 activation=None,
                 depth_multiplier=1,
@@ -87,7 +116,7 @@ def convert_conv(node, params, layers, node_name):
 
                 def convolve_lambda(i, k):
                     import tensorflow as tf
-                    return tf.nn.conv2d(i, k, strides=[1, stride_y, stride_x, 1], padding='VALID')
+                    return tf.nn.conv2d(i, k, strides=[1, stride_y, stride_x, 1], padding=padding_mode)
 
                 input_groups = tf.split(axis=3, num_or_size_splits=groups, value=x)
                 weight_groups = tf.split(axis=3, num_or_size_splits=groups, value=W.transpose(0, 1, 2, 3))
@@ -111,7 +140,7 @@ def convert_conv(node, params, layers, node_name):
                 filters=out_channels,
                 kernel_size=(height, width),
                 strides=(strides[0], strides[1]),
-                padding='valid',
+                padding=padding_mode,
                 weights=weights,
                 use_bias=has_bias,
                 activation=None,
@@ -172,11 +201,18 @@ def convert_convtranspose(node, params, layers, node_name):
         if params['dilations'][0] > 1:
             raise AttributeError('Cannot convert ConvTranspose2d with dilation_rate != 1')
 
+        padding_mode = 'valid'
+        pads = params['pads']
+        strides = params['strides']
+
+        if 2 * pads[0] + strides[0] - height == 0 and 2 * pads[1] + strides[1] - width == 0:
+            padding_mode = 'same'
+
         conv = keras.layers.Conv2DTranspose(
             filters=n_filters,
             kernel_size=(height, width),
-            strides=(params['strides'][0], params['strides'][1]),
-            padding='valid',
+            strides=(strides[0], strides[1]),
+            padding=padding_mode,
             output_padding=0,
             weights=weights,
             use_bias=has_bias,
@@ -195,8 +231,7 @@ def convert_convtranspose(node, params, layers, node_name):
         if 'output_padding' in params and (params['output_padding'][0] > 0 or params['output_padding'][1] > 0):
             raise AttributeError('Cannot convert ConvTranspose2d with output_padding != 0')
 
-        pads = params['pads']
-        if pads[0] > 0:
+        if padding_mode == 'valid' and (pads[0] > 0 or pads[1] > 0):
             logger.debug('Add cropping layer for output padding')
             assert(len(pads) == 2 or (pads[2] == pads[0] and pads[3] == pads[1]))
 
