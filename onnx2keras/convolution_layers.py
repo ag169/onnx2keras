@@ -56,6 +56,11 @@ def convert_conv(node, params, layers, node_name):
         padding_mode = 'valid'
 
         if pads[0] > 0 or pads[1] > 0:
+            '''
+            Padding mode = 'same' is not equivalent between onnx and tf.keras,
+            even though the output shapes match.
+            We have to explicit pad and then do conv with 'valid' mode.
+            
             if h_in is not None and w_in is not None:
                 h_out = (h_in + strides[0] - 1) // strides[0]
                 w_out = (w_in + strides[1] - 1) // strides[1]
@@ -74,6 +79,7 @@ def convert_conv(node, params, layers, node_name):
                 if h_diff == 0 and w_diff == 0 and abs(pads[0] - pads[2]) <= 1 and abs(pads[1] - pads[3]) <= 1:
                     logger.debug("Paddings exist and are corresponding to 'same', setting mode to 'same'")
                     padding_mode = 'same'
+            '''
 
             if padding_mode == 'valid':
                 logger.debug("Paddings exist and are not corresponding to 'same', add ZeroPadding layer")
@@ -205,15 +211,18 @@ def convert_convtranspose(node, params, layers, node_name):
         pads = params['pads']
         strides = params['strides']
 
+        '''
+        Disabling 'same' padding support for now
         if 2 * pads[0] + strides[0] - height == 0 and 2 * pads[1] + strides[1] - width == 0:
             padding_mode = 'same'
+        '''
 
         conv = keras.layers.Conv2DTranspose(
             filters=n_filters,
             kernel_size=(height, width),
             strides=(strides[0], strides[1]),
             padding=padding_mode,
-            output_padding=0,
+            output_padding=0 if padding_mode == 'valid' else None,
             weights=weights,
             use_bias=has_bias,
             activation=None,
@@ -264,6 +273,8 @@ def convert_upsample(node, params, layers, node_name):
     mode = str(params['mode'])[2:-1]
     if mode == 'linear':
         mode = 'bilinear'
+
+    logger.debug('Add upsampling layer with scale: {} and mode: {}'.format(scale, mode))
 
     upsample = keras.layers.UpSampling2D(size=(scale[0], scale[1]), interpolation=mode, name=node_name)
 
