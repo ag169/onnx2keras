@@ -158,6 +158,8 @@ def onnx_to_keras(onnx_model, input_names,
         import numpy as np
         conf = model.get_config()
 
+        axes = []
+
         for layer in conf['layers']:
             if layer['config'] and 'batch_input_shape' in layer['config']:
                 layer['config']['batch_input_shape'] = \
@@ -181,7 +183,15 @@ def onnx_to_keras(onnx_model, input_names,
             if layer['config'] and 'data_format' in layer['config']:
                 layer['config']['data_format'] = 'channels_last'
             if layer['config'] and 'axis' in layer['config']:
-                layer['config']['axis'] = 3
+                ndims = layers[layer['config']['name']].shape.ndims
+                if ndims > 2:
+                    if ndims != len(axes):
+                        axes = [0]
+                        for i in reversed(range(2, ndims)):
+                            axes.append(i)
+                        axes.append(1)
+
+                    layer['config']['axis'] = axes[layer['config']['axis']]
 
         keras.backend.set_image_data_format('channels_last')
         model_tf_ordering = keras.models.Model.from_config(conf)
